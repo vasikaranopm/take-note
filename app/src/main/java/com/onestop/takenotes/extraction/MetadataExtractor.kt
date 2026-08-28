@@ -236,14 +236,27 @@ object MetadataExtractor {
         }
 
     /**
-     * Extracts YouTube video metadata via YouTube oEmbed API and thumbnail services.
+     * Extracts YouTube video metadata via YouTube oEmbed API, HTML scraping (Schema.org LD+JSON, OpenGraph, meta description),
+     * and thumbnail services.
      */
     private suspend fun extractYouTubeMetadata(url: String, videoId: String?): ExtractedContent? {
         val vid = videoId ?: return null
         val canonicalYtUrl = "https://www.youtube.com/watch?v=$vid"
         val highResThumbnail = "https://img.youtube.com/vi/$vid/hqdefault.jpg"
 
-        return try {
+        var title: String = ""
+        var authorName: String = ""
+        var authorUrl: String = ""
+        var thumbnailUrl: String = highResThumbnail
+        var extractedDescription: String = ""
+        val extraMetadata = mutableMapOf(
+            "platform" to "YouTube",
+            "video_id" to vid,
+            "domain" to "youtube.com"
+        )
+
+        // 1. Fetch official oEmbed metadata (Title, Author name, Author URL, Thumbnail)
+        try {
             val oembedUrl = "https://www.youtube.com/oembed?url=$canonicalYtUrl&format=json"
             val request = Request.Builder()
                 .url(oembedUrl)
@@ -255,64 +268,124 @@ object MetadataExtractor {
                 val bodyString = response.body?.string().orEmpty()
                 if (bodyString.isNotBlank()) {
                     val json = JSONObject(bodyString)
-                    val title = json.optString("title").ifBlank { "YouTube Video" }
-                    val authorName = json.optString("author_name")
-                    val authorUrl = json.optString("author_url")
-                    val thumbnailUrl = json.optString("thumbnail_url").ifBlank { highResThumbnail }
-
-                    val description = if (authorName.isNotBlank()) {
-                        "YouTube video by $authorName\n$canonicalYtUrl"
-                    } else {
-                        "YouTube Video: $canonicalYtUrl"
+                    title = json.optString("title").trim()
+                    authorName = json.optString("author_name").trim()
+                    authorUrl = json.optString("author_url").trim()
+                    val thumb = json.optString("thumbnail_url").trim()
+                    if (thumb.isNotBlank()) {
+                        thumbnailUrl = thumb
                     }
-
-                    val metadata = mutableMapOf(
-                        "platform" to "YouTube",
-                        "video_id" to vid,
-                        "domain" to "youtube.com"
-                    )
-                    if (authorName.isNotBlank()) metadata["channel"] = authorName
-                    if (authorUrl.isNotBlank()) metadata["channel_url"] = authorUrl
-
-                    return ExtractedContent(
-                        contentType = "Link",
-                        contentData = canonicalYtUrl,
-                        title = cleanText(title),
-                        description = description,
-                        imageUrl = thumbnailUrl,
-                        extraMetadata = metadata
-                    )
                 }
             }
-
-            // Fallback for YouTube when oEmbed doesn't respond
-            ExtractedContent(
-                contentType = "Link",
-                contentData = canonicalYtUrl,
-                title = "YouTube Video ($vid)",
-                description = "YouTube video • $canonicalYtUrl",
-                imageUrl = highResThumbnail,
-                extraMetadata = mapOf(
-                    "platform" to "YouTube",
-                    "video_id" to vid,
-                    "domain" to "youtube.com"
-                )
-            )
         } catch (e: Exception) {
-            // Offline YouTube fallback with HQ thumbnail
-            ExtractedContent(
-                contentType = "Link",
-                contentData = canonicalYtUrl,
-                title = "YouTube Video",
-                description = "YouTube link: $canonicalYtUrl",
-                imageUrl = highResThumbnail,
-                extraMetadata = mapOf(
-                    "platform" to "YouTube",
-                    "video_id" to vid,
-                    "domain" to "youtube.com"
-                )
-            )
+            // Ignore oEmbed failure and continue to HTML scraping
         }
+
+        // 2. Fetch HTML page to extract the actual video description and richer tags
+        try {
+            val doc = Jsoup.connect(canonicalYtUrl)
+                .userAgent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+                .timeout(8000)
+                .followRedirects(true)
+                .get()
+
+            // Try to extract from Schema.org JSON-LD first
+            val scriptTags = doc.select("script[type=application/ld+json]")
+            for (script in scriptTags) {
+                try {
+                    val jsonStr = script.data().trim()
+                    if (jsonStr.isNotBlank()) {
+                        val json = JSONObject(jsonStr)
+                        if (json.has("description")) {
+                            val d = json.optString("description").trim()
+                            if (d.isNotBlank() && !isGenericYouTubeSlogan(d)) {
+                                extractedDescription = d
+                            }
+                        }
+                        if (title.isBlank() && json.has("name")) {
+                            title = json.optString("name").trim()
+                        }
+                        if (authorName.isBlank() && json.has("author")) {
+                            authorName = json.optString("author").trim()
+                        }
+                        val uploadDate = json.optString("uploadDate").trim()
+                        if (uploadDate.isNotBlank()) {
+                            extraMetadata["upload_date"] = uploadDate
+                        }
+                        val genre = json.optString("genre").trim()
+                        if (genre.isNotBlank()) {
+                            extraMetadata["genre"] = genre
+                        }
+                    }
+                } catch (e: Exception) {
+                    // Ignore JSON parsing errors for this script tag
+                }
+                if (extractedDescription.isNotBlank()) break
+            }
+
+            // If JSON-LD didn't yield description, try meta tags
+            if (extractedDescription.isBlank()) {
+                val metaDesc = doc.select("meta[name=description]").attr("content").trim()
+                val ogDesc = doc.select("meta[property=og:description]").attr("content").trim()
+                val twitterDesc = doc.select("meta[name=twitter:description]").attr("content").trim()
+                val itempropDesc = doc.select("meta[itemprop=description]").attr("content").trim()
+
+                extractedDescription = listOf(metaDesc, ogDesc, twitterDesc, itempropDesc)
+                    .firstOrNull { it.isNotBlank() && !isGenericYouTubeSlogan(it) }
+                    .orEmpty()
+            }
+
+            // Fallback for title if still blank
+            if (title.isBlank()) {
+                val ogTitle = doc.select("meta[property=og:title]").attr("content").trim()
+                val docTitle = doc.title().removeSuffix(" - YouTube").trim()
+                title = ogTitle.ifBlank { docTitle }
+            }
+
+            // Fallback for image if still default
+            if (thumbnailUrl == highResThumbnail) {
+                val ogImage = doc.select("meta[property=og:image]").attr("content").trim()
+                if (ogImage.isNotBlank()) {
+                    thumbnailUrl = ogImage
+                }
+            }
+        } catch (e: Exception) {
+            // Ignore HTML parsing failure
+        }
+
+        if (authorName.isNotBlank()) extraMetadata["channel"] = authorName
+        if (authorUrl.isNotBlank()) extraMetadata["channel_url"] = authorUrl
+
+        // Format final description
+        val finalDescription = when {
+            extractedDescription.isNotBlank() -> {
+                extractedDescription
+            }
+            authorName.isNotBlank() -> {
+                "YouTube video by $authorName\n$canonicalYtUrl"
+            }
+            else -> {
+                "YouTube Video: $canonicalYtUrl"
+            }
+        }
+
+        val finalTitle = title.ifBlank { "YouTube Video ($vid)" }
+
+        return ExtractedContent(
+            contentType = "Link",
+            contentData = canonicalYtUrl,
+            title = cleanText(finalTitle),
+            description = cleanText(finalDescription),
+            imageUrl = thumbnailUrl,
+            extraMetadata = extraMetadata
+        )
+    }
+
+    private fun isGenericYouTubeSlogan(text: String): Boolean {
+        val lower = text.lowercase()
+        return lower.contains("enjoy the videos and music you love") ||
+               lower.contains("upload original content") ||
+               lower.contains("share it all with friends, family, and the world")
     }
 
     /**

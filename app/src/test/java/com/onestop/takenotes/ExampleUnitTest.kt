@@ -29,6 +29,7 @@ class ExampleUnitTest {
     assertEquals("dQw4w9WgXcQ", result.extraMetadata["video_id"])
     assertNotNull(result.imageUrl)
     assertTrue(result.imageUrl!!.contains("dQw4w9WgXcQ"))
+    assertTrue(result.description.isNotBlank())
   }
 
   @Test
