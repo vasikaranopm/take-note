@@ -22,14 +22,23 @@ interface NoteDao {
     @Query("SELECT * FROM notes WHERE id = :id LIMIT 1")
     suspend fun getNoteById(id: Long): NoteEntity?
 
+    @Query("SELECT * FROM notes ORDER BY timestamp DESC")
+    suspend fun getAllNotesList(): List<NoteEntity>
+
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertNote(note: NoteEntity): Long
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertNotes(notes: List<NoteEntity>): List<Long>
 
     @Delete
     suspend fun deleteNote(note: NoteEntity)
 
     @Query("DELETE FROM notes WHERE id = :id")
     suspend fun deleteNoteById(id: Long)
+
+    @Query("DELETE FROM notes")
+    suspend fun deleteAllNotes()
 
     @Update
     suspend fun updateNote(note: NoteEntity)

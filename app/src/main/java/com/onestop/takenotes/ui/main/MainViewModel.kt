@@ -228,4 +228,62 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             onComplete()
         }
     }
+
+    // --- Backup & Restore Operations ---
+
+    fun exportBackup(uri: android.net.Uri, onResult: (Result<com.onestop.takenotes.backup.BackupSummary>) -> Unit) {
+        viewModelScope.launch {
+            val allNotesList = repository.getAllNotesList()
+            val allCatsList = categoryRepository.getAllCategoriesList()
+            val result = com.onestop.takenotes.backup.BackupRestoreManager.exportBackupToUri(
+                context = getApplication(),
+                uri = uri,
+                notes = allNotesList,
+                categories = allCatsList
+            )
+            onResult(result)
+        }
+    }
+
+    fun parseBackupFile(uri: android.net.Uri, onResult: (Result<com.onestop.takenotes.backup.BackupPayload>) -> Unit) {
+        viewModelScope.launch {
+            val result = com.onestop.takenotes.backup.BackupRestoreManager.parseBackupFromUri(
+                context = getApplication(),
+                uri = uri
+            )
+            onResult(result)
+        }
+    }
+
+    fun restoreBackupData(
+        payload: com.onestop.takenotes.backup.BackupPayload,
+        mode: com.onestop.takenotes.backup.RestoreMode,
+        onResult: (Result<com.onestop.takenotes.backup.RestoreResult>) -> Unit
+    ) {
+        viewModelScope.launch {
+            val result = com.onestop.takenotes.backup.BackupRestoreManager.restoreDatabase(
+                payload = payload,
+                mode = mode,
+                noteRepository = repository,
+                categoryRepository = categoryRepository
+            )
+            if (result.isSuccess) {
+                // Reset selected category to "All" to show all restored data
+                _selectedCategory.value = "All"
+            }
+            onResult(result)
+        }
+    }
+
+    fun getBackupJsonForSharing(onResult: (String) -> Unit) {
+        viewModelScope.launch {
+            val allNotesList = repository.getAllNotesList()
+            val allCatsList = categoryRepository.getAllCategoriesList()
+            val json = com.onestop.takenotes.backup.BackupRestoreManager.createBackupJson(
+                notes = allNotesList,
+                categories = allCatsList
+            )
+            onResult(json)
+        }
+    }
 }

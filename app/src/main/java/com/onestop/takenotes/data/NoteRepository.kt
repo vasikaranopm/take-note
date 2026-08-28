@@ -22,8 +22,20 @@ class NoteRepository(private val noteDao: NoteDao) {
         return noteDao.getNoteById(id)
     }
 
+    suspend fun getAllNotesList(): List<NoteEntity> {
+        return noteDao.getAllNotesList()
+    }
+
     suspend fun insertNote(note: NoteEntity): Long {
         return noteDao.insertNote(note)
+    }
+
+    suspend fun insertNotes(notes: List<NoteEntity>): List<Long> {
+        return noteDao.insertNotes(notes)
+    }
+
+    suspend fun deleteAllNotes() {
+        noteDao.deleteAllNotes()
     }
 
     suspend fun deleteNote(note: NoteEntity) {

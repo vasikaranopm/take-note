@@ -49,6 +49,7 @@ import androidx.compose.material.icons.filled.Image
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Link
 import androidx.compose.material.icons.filled.OpenInBrowser
+import androidx.compose.material.icons.filled.Save
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.Tune
@@ -148,11 +149,26 @@ fun HistoryScreen(
 
     var showModelInfoDialog by remember { mutableStateOf(false) }
     var showManageCategoriesDialog by remember { mutableStateOf(false) }
+    var showBackupRestoreDialog by remember { mutableStateOf(false) }
     var showPlusOptionsSheet by remember { mutableStateOf(false) }
     var showAddDialog by remember { mutableStateOf(false) }
     var initialAddText by remember { mutableStateOf("") }
     var selectedNoteForDetail by remember { mutableStateOf<NoteEntity?>(null) }
     var editingNote by remember { mutableStateOf<NoteEntity?>(null) }
+
+    if (showBackupRestoreDialog) {
+        BackupRestoreDialog(
+            totalNotesCount = allNotes.size,
+            totalCategoriesCount = categoriesList.size,
+            onDismiss = { showBackupRestoreDialog = false },
+            viewModel = viewModel,
+            onShowMessage = { msg ->
+                scope.launch {
+                    snackbarHostState.showSnackbar(msg)
+                }
+            }
+        )
+    }
 
     if (showManageCategoriesDialog) {
         CategoryManagerDialog(
@@ -195,14 +211,30 @@ fun HistoryScreen(
                         }
                     },
                     actions = {
-                        IconButton(onClick = { showManageCategoriesDialog = true }) {
+                        IconButton(
+                            onClick = { showManageCategoriesDialog = true },
+                            modifier = Modifier.testTag("manage_categories_top_button")
+                        ) {
                             Icon(
                                 imageVector = Icons.Default.Tune,
                                 contentDescription = "Manage Categories",
                                 tint = MaterialTheme.colorScheme.primary
                             )
                         }
-                        IconButton(onClick = { showModelInfoDialog = true }) {
+                        IconButton(
+                            onClick = { showBackupRestoreDialog = true },
+                            modifier = Modifier.testTag("backup_restore_top_button")
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Save,
+                                contentDescription = "Backup & Restore",
+                                tint = MaterialTheme.colorScheme.primary
+                            )
+                        }
+                        IconButton(
+                            onClick = { showModelInfoDialog = true },
+                            modifier = Modifier.testTag("ai_status_top_button")
+                        ) {
                             Icon(
                                 imageVector = if (modelStatus.isModelLoaded) Icons.Default.AutoAwesome else Icons.Default.Info,
                                 contentDescription = "SmolLM2 AI Status",

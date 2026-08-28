@@ -7,9 +7,19 @@ class CategoryRepository(private val categoryDao: CategoryDao) {
     val allCategories: Flow<List<CategoryEntity>> = categoryDao.getAllCategories()
 
     suspend fun getAllCategoriesSync(): List<CategoryEntity> {
-        // Fallback helper
-        val catList = categoryDao.getCategoryByName("Work")
-        return emptyList()
+        return categoryDao.getAllCategoriesList()
+    }
+
+    suspend fun getAllCategoriesList(): List<CategoryEntity> {
+        return categoryDao.getAllCategoriesList()
+    }
+
+    suspend fun insertCategories(categories: List<CategoryEntity>) {
+        categoryDao.insertCategories(categories)
+    }
+
+    suspend fun deleteAllCategories() {
+        categoryDao.deleteAllCategories()
     }
 
     suspend fun ensureDefaultCategories() {

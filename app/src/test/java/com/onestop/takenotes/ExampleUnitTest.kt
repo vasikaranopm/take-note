@@ -4,7 +4,12 @@ import com.onestop.takenotes.extraction.MetadataExtractor
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.*
 import org.junit.Test
+import org.junit.runner.RunWith
+import org.robolectric.RobolectricTestRunner
+import org.robolectric.annotation.Config
 
+@RunWith(RobolectricTestRunner::class)
+@Config(sdk = [34])
 class ExampleUnitTest {
   @Test
   fun addition_isCorrect() {
@@ -39,6 +44,41 @@ class ExampleUnitTest {
     assertEquals("Link", result.contentType)
     assertEquals("YouTube", result.extraMetadata["platform"])
     assertEquals("abc123XYZ89", result.extraMetadata["video_id"])
+  }
+
+  @Test
+  fun testBackupJsonCreation() {
+    val notes = listOf(
+      com.onestop.takenotes.data.NoteEntity(
+        id = 1,
+        contentType = "Link",
+        contentData = "https://kotlinlang.org",
+        title = "Kotlin Language",
+        description = "Modern programming language for Android",
+        category = "Work",
+        timestamp = 1700000000000L
+      )
+    )
+    val categories = listOf(
+      com.onestop.takenotes.data.CategoryEntity(
+        id = 1,
+        name = "Work",
+        colorHex = "#005AC1",
+        isDefault = true,
+        orderIndex = 0
+      )
+    )
+
+    val jsonString = com.onestop.takenotes.backup.BackupRestoreManager.createBackupJson(notes, categories)
+    assertNotNull(jsonString)
+    assertTrue(jsonString.contains("TakeNotes"))
+    assertTrue(jsonString.contains("Kotlin Language"))
+    assertTrue(jsonString.contains("Work"))
+
+    val json = org.json.JSONObject(jsonString)
+    assertEquals(1, json.getInt("totalNotes"))
+    assertEquals(1, json.getInt("totalCategories"))
+    assertEquals("TakeNotes", json.getString("appName"))
   }
 }
 
