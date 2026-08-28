@@ -8,13 +8,16 @@ import com.onestop.takenotes.ai.ModelStatus
 import com.onestop.takenotes.ai.SmolLM2Classifier
 import com.onestop.takenotes.data.NoteEntity
 import com.onestop.takenotes.extraction.MetadataExtractor
+import com.onestop.takenotes.search.AiSearchAnswer
+import com.onestop.takenotes.search.SearchResult
+import com.onestop.takenotes.search.SearchMode
+import com.onestop.takenotes.search.SmartSearchEngine
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
-import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 
@@ -36,6 +39,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val _searchQuery = MutableStateFlow("")
     val searchQuery: StateFlow<String> = _searchQuery.asStateFlow()
 
+    private val _searchMode = MutableStateFlow(SearchMode.SMART)
+    val searchMode: StateFlow<SearchMode> = _searchMode.asStateFlow()
+
+    private val _aiAnswer = MutableStateFlow<AiSearchAnswer?>(null)
+    val aiAnswer: StateFlow<AiSearchAnswer?> = _aiAnswer.asStateFlow()
+
     private val _modelStatus = MutableStateFlow(
         ModelStatus(isModelLoaded = false, details = "Checking SmolLM2 model...")
     )
@@ -43,7 +52,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     private var recentlyDeletedNote: NoteEntity? = null
 
-    // Observe all notes to calculate counts for category chips
+    // Observe all notes to calculate counts for category chips and run smart search
     val allNotes: StateFlow<List<NoteEntity>> = repository.allNotes
         .stateIn(
             scope = viewModelScope,
@@ -51,30 +60,42 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             initialValue = emptyList()
         )
 
-    @OptIn(ExperimentalCoroutinesApi::class)
-    val displayedNotes: StateFlow<List<NoteEntity>> = combine(
-        _selectedCategory,
-        _searchQuery
-    ) { category, query ->
-        Pair(category, query)
-    }.flatMapLatest { (category, query) ->
-        if (query.isNotBlank()) {
-            repository.searchNotes(query)
+    // Detailed search results with match scores and highlights
+    val searchResultItems: StateFlow<List<SearchResult>> = combine(
+        allNotes,
+        _searchQuery,
+        _searchMode,
+        _selectedCategory
+    ) { notes, query, mode, category ->
+        if (query.isBlank()) {
+            val filtered = if (category != "All") {
+                notes.filter { it.category.equals(category, ignoreCase = true) }
+            } else {
+                notes
+            }
+            filtered.map { SearchResult(it, score = 1.0f) }
         } else {
-            repository.getNotesByCategory(category)
-        }
-    }.combine(_selectedCategory) { notes, category ->
-        // When searching, filter by category if not 'All'
-        if (_searchQuery.value.isNotBlank() && category != "All") {
-            notes.filter { it.category.equals(category, ignoreCase = true) }
-        } else {
-            notes
+            SmartSearchEngine.search(
+                notes = notes,
+                query = query,
+                mode = mode,
+                categoryFilter = if (category != "All") category else null
+            )
         }
     }.stateIn(
         scope = viewModelScope,
         started = SharingStarted.WhileSubscribed(5000),
         initialValue = emptyList()
     )
+
+    val displayedNotes: StateFlow<List<NoteEntity>> = searchResultItems
+        .combine(_searchQuery) { results, _ ->
+            results.map { it.note }
+        }.stateIn(
+            scope = viewModelScope,
+            started = SharingStarted.WhileSubscribed(5000),
+            initialValue = emptyList()
+        )
 
     init {
         initCategoriesAndDefaults()
@@ -135,8 +156,22 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         _selectedCategory.value = category
     }
 
+    fun setSearchMode(mode: SearchMode) {
+        _searchMode.value = mode
+    }
+
     fun updateSearchQuery(query: String) {
         _searchQuery.value = query
+        if (query.isNotBlank()) {
+            _aiAnswer.value = SmartSearchEngine.answerQuestionLocally(allNotes.value, query)
+        } else {
+            _aiAnswer.value = null
+        }
+    }
+
+    fun clearSearch() {
+        _searchQuery.value = ""
+        _aiAnswer.value = null
     }
 
     fun deleteNote(note: NoteEntity) {

@@ -5,18 +5,26 @@ import android.database.Cursor
 import android.net.Uri
 import android.provider.OpenableColumns
 import androidx.exifinterface.media.ExifInterface
+import com.chimbori.crux.Crux
+import com.chimbori.crux.api.Fields
+import com.chimbori.crux.api.Resource
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
+import okhttp3.OkHttpClient
+import okhttp3.Request
+import org.json.JSONObject
 import org.jsoup.Jsoup
 import java.io.InputStream
 import java.net.URI
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+import java.util.concurrent.TimeUnit
 import java.util.regex.Pattern
 
 data class ExtractedContent(
-    val contentType: String, // "Link", "Image", "Text"
+    val contentType: String, // "Link", "Image", "Text", "Video"
     val contentData: String, // URL, URI string, or plain text
     val title: String,
     val description: String,
@@ -30,6 +38,19 @@ object MetadataExtractor {
         "\\b(https?://[a-zA-Z0-9+&@#/%?=~_|!:,.;]*[a-zA-Z0-9+&@#/%=~_|])",
         Pattern.CASE_INSENSITIVE
     )
+
+    private val YOUTUBE_REGEX = Pattern.compile(
+        "(?:https?:\\/\\/)?(?:www\\.|m\\.)?(?:youtube\\.com\\/(?:watch\\?.*?v=|embed\\/|v\\/|shorts\\/)|youtu\\.be\\/)([a-zA-Z0-9_-]{11})",
+        Pattern.CASE_INSENSITIVE
+    )
+
+    private val crux = Crux()
+
+    private val httpClient = OkHttpClient.Builder()
+        .connectTimeout(8, TimeUnit.SECONDS)
+        .readTimeout(8, TimeUnit.SECONDS)
+        .followRedirects(true)
+        .build()
 
     /**
      * Extracts metadata from shared plain text or URL.
@@ -65,19 +86,53 @@ object MetadataExtractor {
     }
 
     /**
-     * Scrapes <title>, <meta name="description">, og:tags from URL using Jsoup with offline fallback.
+     * Scrapes and extracts rich metadata from URL using Chimbori Crux, oEmbed (YouTube/Vimeo),
+     * and Jsoup with offline fallback.
      */
     suspend fun extractFromUrl(url: String, originalText: String = url): ExtractedContent =
         withContext(Dispatchers.IO) {
+            // 1. Check for YouTube URLs first
+            val youtubeMatcher = YOUTUBE_REGEX.matcher(url)
+            if (youtubeMatcher.find()) {
+                val videoId = youtubeMatcher.group(1)
+                val ytExtracted = extractYouTubeMetadata(url, videoId)
+                if (ytExtracted != null) {
+                    return@withContext ytExtracted
+                }
+            }
+
+            // 2. Check for Vimeo URLs
+            if (url.contains("vimeo.com")) {
+                val vimeoExtracted = extractVimeoMetadata(url)
+                if (vimeoExtracted != null) {
+                    return@withContext vimeoExtracted
+                }
+            }
+
+            // 3. Generic Web Page extraction using Chimbori Crux + Jsoup
             try {
+                val host = extractHost(url)
+                val httpUrl = url.toHttpUrlOrNull()
+
+                // Connect and retrieve document with realistic browser user-agent
                 val doc = Jsoup.connect(url)
                     .userAgent("Mozilla/5.0 (Linux; Android 14; Mobile) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36")
                     .timeout(8000)
                     .followRedirects(true)
                     .get()
 
-                // Extract Title
-                var title = doc.title().trim()
+                // Execute Chimbori Crux extraction pipeline
+                var cruxResource: Resource? = null
+                if (httpUrl != null) {
+                    try {
+                        cruxResource = crux.extractFrom(originalUrl = httpUrl, parsedDoc = doc)
+                    } catch (e: Exception) {
+                        // Crux extraction graceful fallback
+                    }
+                }
+
+                // Extract Title: Crux -> OpenGraph -> Twitter -> Document title -> Host
+                var title = cruxResource?.get(Fields.TITLE)?.toString()?.trim().orEmpty()
                 if (title.isBlank()) {
                     title = doc.select("meta[property=og:title]").attr("content").trim()
                 }
@@ -85,11 +140,17 @@ object MetadataExtractor {
                     title = doc.select("meta[name=twitter:title]").attr("content").trim()
                 }
                 if (title.isBlank()) {
-                    title = extractHost(url)
+                    title = doc.title().trim()
+                }
+                if (title.isBlank()) {
+                    title = host
                 }
 
-                // Extract Description
-                var description = doc.select("meta[name=description]").attr("content").trim()
+                // Extract Description: Crux -> Meta description -> OpenGraph -> Twitter -> Lead paragraph
+                var description = cruxResource?.get(Fields.DESCRIPTION)?.toString()?.trim().orEmpty()
+                if (description.isBlank()) {
+                    description = doc.select("meta[name=description]").attr("content").trim()
+                }
                 if (description.isBlank()) {
                     description = doc.select("meta[property=og:description]").attr("content").trim()
                 }
@@ -97,24 +158,69 @@ object MetadataExtractor {
                     description = doc.select("meta[name=twitter:description]").attr("content").trim()
                 }
                 if (description.isBlank()) {
-                    // Fallback to first meaningful paragraph or original text
-                    val firstP = doc.select("p").first()?.text()?.trim().orEmpty()
-                    description = firstP.ifBlank { "Shared Link from ${extractHost(url)}" }
+                    val firstP = doc.select("p").firstOrNull { it.text().isNotBlank() }?.text()?.trim().orEmpty()
+                    description = firstP.ifBlank { "Shared Link from $host" }
                 }
 
-                // Extract OG preview image
-                var ogImage = doc.select("meta[property=og:image]").attr("content").trim()
-                if (ogImage.isBlank()) {
-                    ogImage = doc.select("meta[name=twitter:image]").attr("content").trim()
+                // Extract Banner / Preview Image: Crux -> OpenGraph -> Twitter -> First article image
+                var imageUrl = cruxResource?.get(Fields.BANNER_IMAGE_URL)?.toString()?.trim().orEmpty()
+                if (imageUrl.isBlank()) {
+                    imageUrl = doc.select("meta[property=og:image]").attr("content").trim()
+                }
+                if (imageUrl.isBlank()) {
+                    imageUrl = doc.select("meta[name=twitter:image]").attr("content").trim()
+                }
+                if (imageUrl.isBlank()) {
+                    imageUrl = doc.select("link[rel=image_src]").attr("href").trim()
+                }
+                if (imageUrl.isNotBlank() && imageUrl.startsWith("/")) {
+                    // Resolve relative URL
+                    try {
+                        val baseUri = URI(url)
+                        imageUrl = baseUri.resolve(imageUrl).toString()
+                    } catch (e: Exception) {
+                        // ignore
+                    }
+                }
+
+                // Extract Additional Metadata: Site Name, Favicon, Estimated Reading Time
+                val extraMetadata = mutableMapOf<String, String>()
+                extraMetadata["domain"] = host
+
+                val siteName = cruxResource?.get(Fields.SITE_NAME)?.toString()?.trim().orEmpty().ifBlank {
+                    doc.select("meta[property=og:site_name]").attr("content").trim()
+                }
+                if (siteName.isNotBlank()) {
+                    extraMetadata["site"] = siteName
+                }
+
+                val faviconUrl = cruxResource?.get(Fields.FAVICON_URL)?.toString()?.trim().orEmpty().ifBlank {
+                    doc.select("link[rel~=(?i)^(shortcut|apple-touch-)?icon]").attr("abs:href").trim()
+                }
+                if (faviconUrl.isNotBlank()) {
+                    extraMetadata["favicon"] = faviconUrl
+                }
+
+                val rawDuration = cruxResource?.get(Fields.DURATION_MS)
+                val durationMs = when (rawDuration) {
+                    is Number -> rawDuration.toLong()
+                    is String -> rawDuration.toLongOrNull()
+                    else -> null
+                }
+                if (durationMs != null && durationMs > 0) {
+                    val minutes = durationMs / 60000
+                    if (minutes > 0) {
+                        extraMetadata["read_time"] = "$minutes min read"
+                    }
                 }
 
                 ExtractedContent(
                     contentType = "Link",
                     contentData = url,
                     title = cleanText(title),
-                    description = cleanText(description).take(400),
-                    imageUrl = if (ogImage.isNotBlank()) ogImage else null,
-                    extraMetadata = mapOf("domain" to extractHost(url))
+                    description = cleanText(description).take(500),
+                    imageUrl = if (imageUrl.isNotBlank()) imageUrl else null,
+                    extraMetadata = extraMetadata
                 )
             } catch (e: Exception) {
                 // Offline or scraping failure fallback
@@ -128,6 +234,136 @@ object MetadataExtractor {
                 )
             }
         }
+
+    /**
+     * Extracts YouTube video metadata via YouTube oEmbed API and thumbnail services.
+     */
+    private suspend fun extractYouTubeMetadata(url: String, videoId: String?): ExtractedContent? {
+        val vid = videoId ?: return null
+        val canonicalYtUrl = "https://www.youtube.com/watch?v=$vid"
+        val highResThumbnail = "https://img.youtube.com/vi/$vid/hqdefault.jpg"
+
+        return try {
+            val oembedUrl = "https://www.youtube.com/oembed?url=$canonicalYtUrl&format=json"
+            val request = Request.Builder()
+                .url(oembedUrl)
+                .header("User-Agent", "TakeNotesApp/1.0")
+                .build()
+
+            val response = httpClient.newCall(request).execute()
+            if (response.isSuccessful) {
+                val bodyString = response.body?.string().orEmpty()
+                if (bodyString.isNotBlank()) {
+                    val json = JSONObject(bodyString)
+                    val title = json.optString("title").ifBlank { "YouTube Video" }
+                    val authorName = json.optString("author_name")
+                    val authorUrl = json.optString("author_url")
+                    val thumbnailUrl = json.optString("thumbnail_url").ifBlank { highResThumbnail }
+
+                    val description = if (authorName.isNotBlank()) {
+                        "YouTube video by $authorName\n$canonicalYtUrl"
+                    } else {
+                        "YouTube Video: $canonicalYtUrl"
+                    }
+
+                    val metadata = mutableMapOf(
+                        "platform" to "YouTube",
+                        "video_id" to vid,
+                        "domain" to "youtube.com"
+                    )
+                    if (authorName.isNotBlank()) metadata["channel"] = authorName
+                    if (authorUrl.isNotBlank()) metadata["channel_url"] = authorUrl
+
+                    return ExtractedContent(
+                        contentType = "Link",
+                        contentData = canonicalYtUrl,
+                        title = cleanText(title),
+                        description = description,
+                        imageUrl = thumbnailUrl,
+                        extraMetadata = metadata
+                    )
+                }
+            }
+
+            // Fallback for YouTube when oEmbed doesn't respond
+            ExtractedContent(
+                contentType = "Link",
+                contentData = canonicalYtUrl,
+                title = "YouTube Video ($vid)",
+                description = "YouTube video • $canonicalYtUrl",
+                imageUrl = highResThumbnail,
+                extraMetadata = mapOf(
+                    "platform" to "YouTube",
+                    "video_id" to vid,
+                    "domain" to "youtube.com"
+                )
+            )
+        } catch (e: Exception) {
+            // Offline YouTube fallback with HQ thumbnail
+            ExtractedContent(
+                contentType = "Link",
+                contentData = canonicalYtUrl,
+                title = "YouTube Video",
+                description = "YouTube link: $canonicalYtUrl",
+                imageUrl = highResThumbnail,
+                extraMetadata = mapOf(
+                    "platform" to "YouTube",
+                    "video_id" to vid,
+                    "domain" to "youtube.com"
+                )
+            )
+        }
+    }
+
+    /**
+     * Extracts Vimeo video metadata via Vimeo oEmbed API.
+     */
+    private suspend fun extractVimeoMetadata(url: String): ExtractedContent? {
+        return try {
+            val oembedUrl = "https://vimeo.com/api/oembed.json?url=$url"
+            val request = Request.Builder()
+                .url(oembedUrl)
+                .header("User-Agent", "TakeNotesApp/1.0")
+                .build()
+
+            val response = httpClient.newCall(request).execute()
+            if (response.isSuccessful) {
+                val bodyString = response.body?.string().orEmpty()
+                if (bodyString.isNotBlank()) {
+                    val json = JSONObject(bodyString)
+                    val title = json.optString("title").ifBlank { "Vimeo Video" }
+                    val authorName = json.optString("author_name")
+                    val thumbnailUrl = json.optString("thumbnail_url")
+                    val durationSeconds = json.optInt("duration", 0)
+
+                    val description = if (authorName.isNotBlank()) {
+                        "Vimeo video by $authorName"
+                    } else {
+                        "Vimeo Video"
+                    }
+
+                    val metadata = mutableMapOf(
+                        "platform" to "Vimeo",
+                        "domain" to "vimeo.com"
+                    )
+                    if (authorName.isNotBlank()) metadata["creator"] = authorName
+                    if (durationSeconds > 0) metadata["duration"] = "${durationSeconds / 60}m ${durationSeconds % 60}s"
+
+                    return ExtractedContent(
+                        contentType = "Link",
+                        contentData = url,
+                        title = cleanText(title),
+                        description = description,
+                        imageUrl = if (thumbnailUrl.isNotBlank()) thumbnailUrl else null,
+                        extraMetadata = metadata
+                    )
+                }
+            }
+            null
+        } catch (e: Exception) {
+            null
+        }
+    }
 
     /**
      * Extracts metadata from shared Image URI using ExifInterface.

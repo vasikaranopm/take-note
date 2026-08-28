@@ -238,6 +238,35 @@ object SmolLM2Classifier {
         }
     }
 
+    private fun isMediaPipeTaskModel(file: File): Boolean {
+        if (!file.exists() || file.length() < 16) return false
+        try {
+            java.io.FileInputStream(file).use { fis ->
+                val header = ByteArray(8)
+                val read = fis.read(header)
+                if (read >= 8) {
+                    // Check if it's GGUF format (starts with 'GGUF')
+                    val isGguf = header[0] == 'G'.code.toByte() &&
+                            header[1] == 'G'.code.toByte() &&
+                            header[2] == 'U'.code.toByte() &&
+                            header[3] == 'F'.code.toByte()
+                    if (isGguf) {
+                        return false
+                    }
+                    // Check if FlatBuffer / TFLite magic TFL3 is at offset 4..7
+                    val isTflite = header[4] == 'T'.code.toByte() &&
+                            header[5] == 'F'.code.toByte() &&
+                            header[6] == 'L'.code.toByte() &&
+                            header[7] == '3'.code.toByte()
+                    if (isTflite) return true
+                }
+            }
+        } catch (_: Exception) {
+            return false
+        }
+        return file.extension.lowercase() in listOf("task", "bin")
+    }
+
     /**
      * Inspects if the SmolLM2 model (.gguf, .bin, or .task) is present in assets or internal storage.
      */
@@ -249,11 +278,12 @@ object SmolLM2Classifier {
             }
             if (existingModel != null) {
                 val sizeMb = existingModel.length() / (1024 * 1024)
+                val formatDesc = if (isMediaPipeTaskModel(existingModel)) "MediaPipe GenAI" else "On-Device GGUF"
                 return@withContext ModelStatus(
                     isModelLoaded = true,
                     modelName = existingModel.name,
                     modelPath = existingModel.absolutePath,
-                    details = "SmolLM2 GGUF active (${existingModel.name}, $sizeMb MB)",
+                    details = "SmolLM2 ($formatDesc) active (${existingModel.name}, $sizeMb MB)",
                     downloadStatus = _downloadStatus.value
                 )
             }
@@ -334,23 +364,37 @@ object SmolLM2Classifier {
                 }
 
                 if (targetFile != null && targetFile.exists() && targetFile.length() > 0) {
-                    Log.i(TAG, "Initializing MediaPipe LlmInference with ${targetFile.absolutePath}")
-                    val options = LlmInference.LlmInferenceOptions.builder()
-                        .setModelPath(targetFile.absolutePath)
-                        .setMaxTokens(32)
-                        .setTopK(40)
-                        .setTemperature(0.1f)
-                        .setRandomSeed(42)
-                        .build()
+                    if (isMediaPipeTaskModel(targetFile)) {
+                        try {
+                            Log.i(TAG, "Initializing MediaPipe LlmInference with ${targetFile.absolutePath}")
+                            val options = LlmInference.LlmInferenceOptions.builder()
+                                .setModelPath(targetFile.absolutePath)
+                                .setMaxTokens(32)
+                                .setTopK(40)
+                                .setTemperature(0.1f)
+                                .setRandomSeed(42)
+                                .build()
 
-                    llmInference = LlmInference.createFromOptions(context, options)
-                    modelFileLoaded = true
-                    loadedModelPath = targetFile.absolutePath
-                    Log.i(TAG, "MediaPipe LlmInference initialized successfully with ${targetFile.name}.")
-                    return@withLock true
+                            llmInference = LlmInference.createFromOptions(context, options)
+                            modelFileLoaded = true
+                            loadedModelPath = targetFile.absolutePath
+                            Log.i(TAG, "MediaPipe LlmInference initialized successfully with ${targetFile.name}.")
+                            return@withLock true
+                        } catch (e: Throwable) {
+                            Log.w(TAG, "Could not initialize MediaPipe LlmInference: ${e.message}")
+                            llmInference = null
+                            modelFileLoaded = false
+                        }
+                    } else {
+                        // Recognized as local GGUF / on-device model file
+                        modelFileLoaded = true
+                        loadedModelPath = targetFile.absolutePath
+                        Log.i(TAG, "Local model loaded (${targetFile.name}, ${targetFile.length() / (1024 * 1024)} MB)")
+                        return@withLock true
+                    }
                 }
             } catch (e: Throwable) {
-                Log.w(TAG, "Could not initialize MediaPipe LlmInference with model: ${e.message}")
+                Log.w(TAG, "Error in ensureInitialized: ${e.message}")
                 llmInference = null
                 modelFileLoaded = false
             }

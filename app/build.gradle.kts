@@ -1,5 +1,6 @@
 import com.google.gms.googleservices.GoogleServicesPlugin.MissingGoogleServicesStrategy
 import java.io.FileInputStream
+import java.util.Base64
 import java.util.Properties
 
 plugins {
@@ -29,11 +30,11 @@ val smollm2ModelFilename: String = modelProperties.getProperty(
 
 android {
   namespace = "com.onestop.takenotes"
-  compileSdk { version = release(36) { minorApiLevel = 1 } }
+  compileSdk = 36
 
   defaultConfig {
     applicationId = "com.onestop.takenotes"
-    minSdk = 24
+    minSdk = 26
     targetSdk = 36
     versionCode = 1
     versionName = "1.0"
@@ -57,7 +58,18 @@ android {
       keyPassword = System.getenv("KEY_PASSWORD")
     }
     create("debugConfig") {
-      storeFile = file("${rootDir}/debug.keystore")
+      val projectDebugKeystore = rootProject.file("debug.keystore")
+      if (!projectDebugKeystore.exists()) {
+        val base64Keystore = rootProject.file("debug.keystore.base64")
+        if (base64Keystore.exists()) {
+          try {
+            val bytes = Base64.getDecoder().decode(base64Keystore.readText().trim())
+            projectDebugKeystore.writeBytes(bytes)
+          } catch (_: Exception) {}
+        }
+      }
+      val fallbackKeystore = file("${System.getProperty("user.home")}/.android/debug.keystore")
+      storeFile = if (projectDebugKeystore.exists()) projectDebugKeystore else fallbackKeystore
       storePassword = "android"
       keyAlias = "androiddebugkey"
       keyPassword = "android"
@@ -126,6 +138,7 @@ dependencies {
   implementation(libs.coil.compose)
   implementation(libs.androidx.exifinterface)
   implementation(libs.jsoup)
+  implementation(libs.crux)
   implementation(libs.tasks.genai)
   implementation(libs.converter.moshi)
   implementation(libs.firebase.ai)
