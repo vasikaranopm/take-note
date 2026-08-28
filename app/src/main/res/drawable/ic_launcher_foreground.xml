@@ -4,22 +4,38 @@
     android:viewportWidth="108"
     android:viewportHeight="108">
     <group
-        android:translateX="22"
-        android:translateY="22">
-        <!-- Notebook outline & fill inside 64x64 container -->
+        android:scaleX="1.45"
+        android:scaleY="1.45"
+        android:translateX="19"
+        android:translateY="19">
+        <!-- Main Notebook Card Base -->
         <path
             android:fillColor="#FFFFFF"
-            android:pathData="M12,4C8.69,4 6,6.69 6,10v44c0,3.31 2.69,6 6,6h38c3.31,0 6,-2.69 6,-6V18L44,4H12z M12,8h30v8h8v38c0,1.1 -0.9,2 -2,2H12c-1.1,0 -2,-0.9 -2,-2V10c0,-1.1 0.9,-2 2,-2z" />
-        <!-- Notebook spine bookmark / lines -->
+            android:pathData="M14,10 L30,10 C31.66,10 33,11.34 33,13 L33,35 C33,36.66 31.66,38 30,38 L14,38 C12.34,38 11,36.66 11,35 L11,13 C11,11.34 12.34,10 14,10 Z" />
+
+        <!-- Notebook Spine / Accent Line -->
         <path
             android:fillColor="#818CF8"
-            android:pathData="M16,22h24v4H16z M16,30h20v4H16z M16,38h14v4H16z" />
-        <!-- AI Sparkle star -->
+            android:pathData="M11,13 C11,11.34 12.34,10 14,10 L16,10 L16,38 L14,38 C12.34,38 11,36.66 11,35 Z" />
+
+        <!-- Content Lines inside notebook -->
         <path
-            android:fillColor="#FBBF24"
-            android:pathData="M52,32l2.5,5.5L60,40l-5.5,2.5L52,48l-2.5,-5.5L44,40l5.5,-2.5z" />
+            android:fillColor="#94A3B8"
+            android:pathData="M19,16 L29,16 C29.55,16 30,16.45 30,17 C30,17.55 29.55,18 29,18 L19,18 C18.45,18 18,17.55 18,17 C18,16.45 18.45,16 19,16 Z M19,22 L27,22 C27.55,22 28,22.45 28,23 C28,23.55 27.55,24 27,24 L19,24 C18.45,24 18,23.55 18,23 C18,22.45 18.45,22 19,22 Z M19,28 L25,28 C25.55,28 26,28.45 26,29 C26,29.55 25.55,30 25,30 L19,30 C18.45,30 18,29.55 18,29 C18,28.45 18.45,28 19,28 Z" />
+
+        <!-- Smart Bookmark Ribbon hanging from top -->
+        <path
+            android:fillColor="#F59E0B"
+            android:pathData="M23,10 L28,10 L28,21 L25.5,19 L23,21 Z" />
+
+        <!-- AI Intelligence 4-Point Sparkle 1 -->
         <path
             android:fillColor="#FDE047"
-            android:pathData="M38,44l1.5,3.5L43,49l-3.5,1.5L38,54l-1.5,-3.5L33,49l3.5,-1.5z" />
+            android:pathData="M37,18 C37,21.5 39.5,24 43,24 C39.5,24 37,26.5 37,30 C37,26.5 34.5,24 31,24 C34.5,24 37,21.5 37,18 Z" />
+
+        <!-- AI Sparkle 2 (Mini) -->
+        <path
+            android:fillColor="#FBBF24"
+            android:pathData="M31,31 C31,32.5 32,33.5 33.5,33.5 C32,33.5 31,34.5 31,36 C31,34.5 30,33.5 28.5,33.5 C30,33.5 31,32.5 31,31 Z" />
     </group>
 </vector>
