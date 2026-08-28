@@ -1,0 +1,6 @@
+{
+  "name": "TakeNotes",
+  "description": "Smart share target and notes repository with local AI categorization (SmolLM2), web metadata scraping, and image metadata extraction.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
