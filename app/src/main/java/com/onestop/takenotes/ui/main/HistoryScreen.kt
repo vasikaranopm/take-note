@@ -14,6 +14,9 @@ import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.filled.QuestionAnswer
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -150,6 +153,7 @@ fun HistoryScreen(
     var showModelInfoDialog by remember { mutableStateOf(false) }
     var showManageCategoriesDialog by remember { mutableStateOf(false) }
     var showBackupRestoreDialog by remember { mutableStateOf(false) }
+    var showAskAiSheet by remember { mutableStateOf(false) }
     var showPlusOptionsSheet by remember { mutableStateOf(false) }
     var showAddDialog by remember { mutableStateOf(false) }
     var initialAddText by remember { mutableStateOf("") }
@@ -211,6 +215,16 @@ fun HistoryScreen(
                         }
                     },
                     actions = {
+                        IconButton(
+                            onClick = { showAskAiSheet = true },
+                            modifier = Modifier.testTag("ask_ai_top_button")
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.QuestionAnswer,
+                                contentDescription = "Ask My Notes",
+                                tint = MaterialTheme.colorScheme.primary
+                            )
+                        }
                         IconButton(
                             onClick = { showManageCategoriesDialog = true },
                             modifier = Modifier.testTag("manage_categories_top_button")
@@ -539,6 +553,17 @@ fun HistoryScreen(
         }
     }
 
+    // Ask My Notes AI Assistant Sheet
+    if (showAskAiSheet) {
+        AskMyNotesBottomSheet(
+            allNotes = allNotes,
+            onDismiss = { showAskAiSheet = false },
+            onOpenNote = { note ->
+                selectedNoteForDetail = note
+            }
+        )
+    }
+
     // Model Status Info Dialog
     if (showModelInfoDialog) {
         ModelInfoDialog(
@@ -589,6 +614,8 @@ fun HistoryScreen(
     selectedNoteForDetail?.let { note ->
         NoteDetailDialog(
             note = note,
+            allNotes = allNotes,
+            onSelectNote = { selectedNoteForDetail = it },
             onDismiss = { selectedNoteForDetail = null },
             onEdit = {
                 selectedNoteForDetail = null
@@ -948,6 +975,36 @@ fun NoteCard(
                     maxLines = 3,
                     overflow = TextOverflow.Ellipsis
                 )
+            }
+
+            // Quick AI Action Items / Tasks Badge
+            val detectedTasks = remember(note) { com.onestop.takenotes.ai.AiFeaturesEngine.extractActionItems(note) }
+            if (detectedTasks.isNotEmpty()) {
+                Spacer(modifier = Modifier.height(8.dp))
+                Surface(
+                    shape = RoundedCornerShape(8.dp),
+                    color = MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.5f)
+                ) {
+                    Row(
+                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Check,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.secondary,
+                            modifier = Modifier.size(12.dp)
+                        )
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Text(
+                            text = "${detectedTasks.size} action item${if (detectedTasks.size > 1) "s" else ""}",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.secondary,
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.Medium
+                        )
+                    }
+                }
             }
 
             Spacer(modifier = Modifier.height(12.dp))
@@ -1969,12 +2026,15 @@ fun CategoryManagerDialog(
 @Composable
 fun NoteDetailDialog(
     note: NoteEntity,
+    allNotes: List<NoteEntity> = emptyList(),
+    onSelectNote: (NoteEntity) -> Unit = {},
     onDismiss: () -> Unit,
     onEdit: () -> Unit,
     onDelete: () -> Unit
 ) {
     val context = LocalContext.current
     val categoryColor = CategoryColors.getColor(note.category)
+    val scrollState = rememberScrollState()
 
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -2008,7 +2068,12 @@ fun NoteDetailDialog(
             }
         },
         text = {
-            Column {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .heightIn(max = 480.dp)
+                    .verticalScroll(scrollState)
+            ) {
                 if (note.contentType == "Image" && note.contentData.isNotBlank()) {
                     AsyncImage(
                         model = Uri.parse(note.contentData),
@@ -2034,6 +2099,26 @@ fun NoteDetailDialog(
                         text = "URL: ${note.contentData}",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.primary
+                    )
+                }
+
+                Spacer(modifier = Modifier.height(12.dp))
+
+                // AI Feature 1: 1-Tap Summary & Key Takeaways
+                AiNoteSummaryCard(note = note)
+
+                Spacer(modifier = Modifier.height(10.dp))
+
+                // AI Feature 2: Action Items & Tasks
+                ActionItemsSection(note = note)
+
+                // AI Feature 3: Smart Related Notes
+                if (allNotes.isNotEmpty()) {
+                    Spacer(modifier = Modifier.height(10.dp))
+                    RelatedNotesSection(
+                        currentNote = note,
+                        allNotes = allNotes,
+                        onSelectNote = onSelectNote
                     )
                 }
 

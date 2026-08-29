@@ -80,5 +80,66 @@ class ExampleUnitTest {
     assertEquals(1, json.getInt("totalCategories"))
     assertEquals("TakeNotes", json.getString("appName"))
   }
+
+  @Test
+  fun testAiActionItemExtraction() {
+    val note = com.onestop.takenotes.data.NoteEntity(
+      id = 1,
+      contentType = "Text",
+      contentData = "Sprint Planning",
+      title = "Sprint Planning",
+      description = "TODO: Finish code review by Friday\n- [ ] Buy groceries tomorrow\nCall the client at 2pm",
+      category = "Work"
+    )
+
+    val actionItems = com.onestop.takenotes.ai.AiFeaturesEngine.extractActionItems(note)
+    assertTrue("Should extract action items", actionItems.isNotEmpty())
+    assertTrue("Should contain review task", actionItems.any { it.text.contains("code review", ignoreCase = true) })
+    assertTrue("Should contain buy task", actionItems.any { it.text.contains("groceries", ignoreCase = true) })
+  }
+
+  @Test
+  fun testAiSummarization() {
+    val note = com.onestop.takenotes.data.NoteEntity(
+      id = 2,
+      contentType = "Text",
+      contentData = "Deep Learning Guide",
+      title = "Deep Learning Guide",
+      description = "Neural networks are computing systems inspired by the biological brain. They consist of input, hidden, and output layers. Backpropagation is used for training the model weights efficiently.",
+      category = "Education"
+    )
+
+    val summary = com.onestop.takenotes.ai.AiFeaturesEngine.summarizeNote(note)
+    assertNotNull(summary)
+    assertTrue(summary.oneLiner.isNotBlank())
+    assertTrue(summary.keyTakeaways.isNotEmpty())
+  }
+
+  @Test
+  fun testAiAskNotes() {
+    val notes = listOf(
+      com.onestop.takenotes.data.NoteEntity(
+        id = 1,
+        contentType = "Text",
+        contentData = "WiFi Secret",
+        title = "Office WiFi Password",
+        description = "The guest WiFi password is SecureGuest2026",
+        category = "Personal"
+      ),
+      com.onestop.takenotes.data.NoteEntity(
+        id = 2,
+        contentType = "Link",
+        contentData = "https://example.com/recipe",
+        title = "Pancake Recipe",
+        description = "Flour, eggs, milk, sugar, butter",
+        category = "Personal"
+      )
+    )
+
+    val answer = com.onestop.takenotes.ai.AiFeaturesEngine.askNotes("What is the wifi password?", notes)
+    assertNotNull(answer)
+    assertTrue("Answer should contain wifi password", answer!!.answer.contains("SecureGuest2026"))
+  }
 }
+
 
